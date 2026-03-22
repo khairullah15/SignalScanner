@@ -12,6 +12,9 @@
     <AndroidMinSdkVersion>26</AndroidMinSdkVersion>
     <AndroidTargetSdkVersion>34</AndroidTargetSdkVersion>
     <ApplicationTitle>Signal Scanner</ApplicationTitle>
+    <!-- Disable assembly store to avoid ZipIOException bug in Android SDK 35 -->
+    <AndroidUseAssemblyStore>false</AndroidUseAssemblyStore>
+    <AndroidEnableAssemblyCompression>false</AndroidEnableAssemblyCompression>
   </PropertyGroup>
 
   <ItemGroup>
