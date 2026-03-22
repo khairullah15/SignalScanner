@@ -1,7 +1,7 @@
 #if ANDROID
 using Android.Content;
+using Android.OS;
 using Android.Telephony;
-using Android.Telephony.Gsm;
 using SignalScanner.Models;
 using Application = Android.App.Application;
 
@@ -23,7 +23,14 @@ public class CellSignalService
 
         try
         {
-            var cellInfos = _telephony.GetAllCellInfo();
+            // GetAllCellInfo() is deprecated in API 29+
+            // Use synchronous fallback via the deprecated method wrapped safely
+#pragma warning disable CA1416
+#pragma warning disable CS0618
+            var cellInfos = _telephony.AllCellInfo;
+#pragma warning restore CS0618
+#pragma warning restore CA1416
+
             if (cellInfos == null) return results;
 
             foreach (var cell in cellInfos)
@@ -33,7 +40,7 @@ public class CellSignalService
                     results.Add(signal);
             }
 
-            // Remove duplicates (same operator/type), keep strongest
+            // Remove duplicates, keep strongest per operator+type
             results = results
                 .GroupBy(s => $"{s.Operator}_{s.NetworkType}")
                 .Select(g => g.OrderByDescending(x => x.SignalDbm).First())
@@ -69,8 +76,11 @@ public class CellSignalService
         int dbm   = ss?.Dbm ?? -120;
         int level = ss?.Level ?? 0;
 
-        var mcc = id?.MccString ?? "";
-        var mnc = id?.MncString ?? "";
+#pragma warning disable CA1416
+        var mcc = Build.VERSION.SdkInt >= BuildVersionCodes.P ? id?.MccString ?? "" : "";
+        var mnc = Build.VERSION.SdkInt >= BuildVersionCodes.P ? id?.MncString ?? "" : "";
+#pragma warning restore CA1416
+
         var carrier = PakistanCarriers.Resolve(mcc, mnc);
 
         return new NetworkSignal
@@ -99,8 +109,11 @@ public class CellSignalService
         int dbm   = ss?.Dbm ?? -120;
         int level = ss?.Level ?? 0;
 
-        var mcc = id?.MccString ?? "";
-        var mnc = id?.MncString ?? "";
+#pragma warning disable CA1416
+        var mcc = Build.VERSION.SdkInt >= BuildVersionCodes.P ? id?.MccString ?? "" : "";
+        var mnc = Build.VERSION.SdkInt >= BuildVersionCodes.P ? id?.MncString ?? "" : "";
+#pragma warning restore CA1416
+
         var carrier = PakistanCarriers.Resolve(mcc, mnc);
 
         return new NetworkSignal
@@ -129,8 +142,11 @@ public class CellSignalService
         int dbm   = ss?.Dbm ?? -110;
         int level = ss?.Level ?? 0;
 
-        var mcc = id?.MccString ?? "";
-        var mnc = id?.MncString ?? "";
+#pragma warning disable CA1416
+        var mcc = Build.VERSION.SdkInt >= BuildVersionCodes.P ? id?.MccString ?? "" : "";
+        var mnc = Build.VERSION.SdkInt >= BuildVersionCodes.P ? id?.MncString ?? "" : "";
+#pragma warning restore CA1416
+
         var carrier = PakistanCarriers.Resolve(mcc, mnc);
 
         return new NetworkSignal
@@ -153,14 +169,19 @@ public class CellSignalService
     // ── 5G NR ───────────────────────────────────────────────────────────────
     private NetworkSignal ParseNr(CellInfoNr cell)
     {
+#pragma warning disable CA1416
+        if (Build.VERSION.SdkInt < BuildVersionCodes.Q)
+            return null!;
+
         var id = cell.CellIdentity as CellIdentityNr;
         var ss = cell.CellSignalStrength as CellSignalStrengthNr;
 
         int dbm   = ss?.SsRsrp ?? -120;
         int level = ss?.Level ?? 0;
+        var mcc   = id?.MccString ?? "";
+        var mnc   = id?.MncString ?? "";
+#pragma warning restore CA1416
 
-        var mcc = id?.MccString ?? "";
-        var mnc = id?.MncString ?? "";
         var carrier = PakistanCarriers.Resolve(mcc, mnc);
 
         return new NetworkSignal
@@ -178,8 +199,6 @@ public class CellSignalService
         };
     }
 
-    // ── Helpers ─────────────────────────────────────────────────────────────
-    /// <summary>Converts dBm to 0–100 percent within the given range.</summary>
     private static int DbmToPercent(int dbm, int minDbm, int maxDbm)
     {
         dbm = Math.Clamp(dbm, minDbm, maxDbm);
