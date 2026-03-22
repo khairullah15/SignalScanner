@@ -25,19 +25,17 @@ jobs:
       - name: Install MAUI Android workload
         run: dotnet workload install maui-android --ignore-failed-sources
 
-      # Show folder structure so we can see where csproj actually is
       - name: Show repo structure
         run: Get-ChildItem -Recurse -Filter "*.csproj" | Select-Object FullName
         shell: pwsh
 
       - name: Restore NuGet packages
-        run: dotnet restore SignalScanner/SignalScanner.csproj
+        run: dotnet restore SignalScanner.csproj
 
       - name: Build Android APK (Debug)
-        run: dotnet build SignalScanner/SignalScanner.csproj -f net8.0-android -c Debug -p:AndroidPackageFormat=apk -p:AndroidKeyStore=false
+        run: dotnet build SignalScanner.csproj -f net8.0-android -c Debug -p:AndroidPackageFormat=apk -p:AndroidKeyStore=false
         shell: pwsh
 
-      # Find the APK wherever it ended up
       - name: Find APK
         run: Get-ChildItem -Recurse -Filter "*.apk" | Select-Object FullName
         shell: pwsh
