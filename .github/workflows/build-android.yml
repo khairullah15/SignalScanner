@@ -10,7 +10,7 @@ env:
 
 jobs:
   build-android:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04   # Use older Ubuntu - has older pre-installed SDK
 
     steps:
 
@@ -28,46 +28,56 @@ jobs:
           java-version: '17'
           distribution: 'microsoft'
 
-      - name: Install MAUI Android workload
-        run: dotnet workload install maui-android --ignore-failed-sources
-
-      # Force-replace broken SDK 35 with working SDK 34.0.95
-      - name: Replace Android SDK 35 with 34.0.95
+      - name: Check pre-installed Android SDK version
         run: |
-          echo "=== Current Android packs ==="
-          ls /usr/share/dotnet/packs/ | grep -i android
+          echo "=== dotnet packs ==="
+          ls /usr/share/dotnet/packs/ | grep -i android || echo "none"
+          echo "=== dotnet version ==="
+          dotnet --version
 
-          # Download Microsoft.Android.Sdk.Linux 34.0.95 from NuGet
-          curl -L "https://www.nuget.org/api/v2/package/Microsoft.Android.Sdk.Linux/34.0.95" \
-            -o /tmp/android-sdk-34.nupkg
+      - name: Remove SDK 35 if present and install workload
+        run: |
+          # Remove broken SDK 35 before installing workload
+          sudo rm -rf /usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/35* 2>/dev/null || true
+          sudo rm -rf /usr/share/dotnet/packs/Microsoft.Android.Ref.35* 2>/dev/null || true
 
-          echo "Downloaded: $(du -sh /tmp/android-sdk-34.nupkg)"
-
-          # Extract into packs directory
-          sudo mkdir -p /usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/34.0.95
-          sudo unzip -q /tmp/android-sdk-34.nupkg \
-            -d /usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/34.0.95
+          # Install workload - will get latest available compatible version
+          dotnet workload install maui-android --ignore-failed-sources
 
           echo "=== Android packs after install ==="
           ls /usr/share/dotnet/packs/ | grep -i android
 
-      # Update global.json to force SDK 34 usage
-      - name: Create global.json to pin Android SDK
+      - name: Force install Android SDK 34 pack via NuGet feed
         run: |
-          cat > global.json << 'GLOBALJSON'
-          {
-            "msbuild-sdks": {
-              "Microsoft.Android.Sdk.Linux": "34.0.95"
-            }
-          }
-          GLOBALJSON
-          cat global.json
+          # Create a temp project that references the exact SDK version
+          mkdir -p /tmp/sdk-fix && cd /tmp/sdk-fix
+          dotnet new classlib -n SDKFix --force -f net9.0 > /dev/null
+
+          # Add the specific Android SDK package
+          dotnet add SDKFix/SDKFix.csproj package Microsoft.Android.Sdk.Linux \
+            --version 34.0.95 \
+            --package-directory /tmp/nuget-cache 2>&1 || true
+
+          # Find and extract it
+          NUPKG=$(find /tmp/nuget-cache ~/.nuget -name "microsoft.android.sdk.linux.34.0.95.nupkg" 2>/dev/null | head -1)
+          echo "nupkg: $NUPKG"
+
+          if [ -n "$NUPKG" ]; then
+            sudo mkdir -p /usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/34.0.95
+            sudo unzip -q "$NUPKG" -d /usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/34.0.95
+            echo "✓ SDK 34 installed"
+            ls /usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/
+          fi
 
       - name: Restore NuGet packages
         run: dotnet restore SignalScanner.csproj
 
-      - name: Build APK
+      - name: Build APK - force SDK 34
         run: |
+          # Find where SDK 34 tools actually are
+          SDK34_TOOLS=$(find /usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/34* -name "Xamarin.Android.Common.targets" 2>/dev/null | head -1)
+          echo "SDK34 targets: $SDK34_TOOLS"
+
           dotnet build SignalScanner.csproj \
             -f net9.0-android \
             -c Debug \
@@ -77,10 +87,14 @@ jobs:
             -p:AndroidSigningKeyAlias=androiddebugkey \
             -p:AndroidSigningKeyPass=android \
             -p:AndroidSigningStorePass=android \
-            -p:AndroidSdkDirectory=/usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/34.0.95
+            -p:AndroidSdkBuildToolsVersion=34.0.0 \
+            -p:TargetFrameworkVersion=v14.0 \
+            -v:detailed 2>&1 | grep -E "(error|warning|APK|apk|->)" | head -60
 
       - name: Find APK
-        run: find /home/runner/work -name "*.apk" 2>/dev/null || true
+        run: |
+          echo "=== All APK files ==="
+          find /home/runner/work -name "*.apk" 2>/dev/null || true
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
