@@ -25,10 +25,6 @@ jobs:
       - name: Install MAUI Android workload
         run: dotnet workload install maui-android --ignore-failed-sources
 
-      - name: Show repo structure
-        run: Get-ChildItem -Recurse -Filter "*.csproj" | Select-Object FullName
-        shell: pwsh
-
       - name: Restore NuGet packages
         run: dotnet restore SignalScanner.csproj
 
@@ -36,8 +32,15 @@ jobs:
         run: dotnet build SignalScanner.csproj -f net9.0-android -c Debug -p:AndroidPackageFormat=apk -p:AndroidKeyStore=false
         shell: pwsh
 
-      - name: Find APK
-        run: Get-ChildItem -Recurse -Filter "*.apk" | Select-Object FullName
+      # Search entire drive for the APK so we know exact path
+      - name: Find APK (search all)
+        run: |
+          Write-Host "=== Searching for APK files ==="
+          Get-ChildItem -Path "D:\a" -Recurse -Filter "*.apk" -ErrorAction SilentlyContinue | Select-Object FullName
+          Write-Host "=== Searching for signed APK ==="
+          Get-ChildItem -Path "D:\a" -Recurse -Filter "*-Signed.apk" -ErrorAction SilentlyContinue | Select-Object FullName
+          Write-Host "=== bin folder contents ==="
+          Get-ChildItem -Path "D:\a\SignalScanner\SignalScanner\bin" -Recurse -ErrorAction SilentlyContinue | Select-Object FullName
         shell: pwsh
 
       - name: Upload APK artifact
@@ -45,7 +48,6 @@ jobs:
         with:
           name: SignalScanner-Debug-APK
           path: |
-            **/bin/Debug/**/*.apk
-            **/bin/Release/**/*.apk
+            D:\a\SignalScanner\SignalScanner\bin\**\*.apk
           retention-days: 30
           if-no-files-found: warn
