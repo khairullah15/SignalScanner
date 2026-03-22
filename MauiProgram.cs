@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Logging;
 using SignalScanner.Views;
 
 namespace SignalScanner;
@@ -19,9 +18,7 @@ public static class MauiProgram
 
         builder.Services.AddSingleton<MainPage>();
 
-#if DEBUG
-        builder.Logging.AddDebug();
-#endif
+        // AddDebug() removed - not available in .NET 9 MAUI without extra package
 
         return builder.Build();
     }
