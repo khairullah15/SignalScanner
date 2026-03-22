@@ -10,7 +10,7 @@ env:
 
 jobs:
   build-android:
-    runs-on: ubuntu-latest   # Switch to Linux - avoids Windows SDK 35 bug
+    runs-on: ubuntu-latest
 
     steps:
 
@@ -28,8 +28,14 @@ jobs:
           java-version: '17'
           distribution: 'microsoft'
 
-      - name: Install MAUI Android workload
-        run: dotnet workload install maui-android --ignore-failed-sources
+      # Pin to maui 9.0.10 which ships Android SDK 34 (not broken 35)
+      - name: Install pinned MAUI workload 9.0.10
+        run: |
+          dotnet workload install maui-android --version 9.0.10 --ignore-failed-sources || \
+          dotnet workload install maui-android --ignore-failed-sources
+
+      - name: Show Android SDK version
+        run: find /usr/share/dotnet/packs -maxdepth 1 -name "Microsoft.Android.Sdk*" | sort
 
       - name: Restore NuGet packages
         run: dotnet restore SignalScanner.csproj
@@ -44,16 +50,13 @@ jobs:
             -p:AndroidKeyStore=false \
             -p:AndroidSigningKeyAlias=androiddebugkey \
             -p:AndroidSigningKeyPass=android \
-            -p:AndroidSigningStorePass=android \
-            -p:AndroidUseAssemblyStore=false \
-            -p:AndroidEnableAssemblyCompression=false
+            -p:AndroidSigningStorePass=android
 
       - name: Find APK
         run: |
           echo "=== All APK files ==="
-          find /home/runner/work -name "*.apk" 2>/dev/null
-          echo "=== bin/Debug folder ==="
-          find . -path "*/bin/Debug*" -name "*.apk" 2>/dev/null
+          find /home/runner/work -name "*.apk" 2>/dev/null || true
+          find . -name "*.apk" 2>/dev/null || true
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -62,5 +65,6 @@ jobs:
           path: |
             **/bin/Debug/**/*.apk
             **/bin/Release/**/*.apk
+            **/*.apk
           retention-days: 30
           if-no-files-found: warn
