@@ -28,26 +28,30 @@ jobs:
       - name: Restore NuGet packages
         run: dotnet restore SignalScanner.csproj
 
-      - name: Build Android APK (Debug)
-        run: dotnet build SignalScanner.csproj -f net9.0-android -c Debug -p:AndroidPackageFormat=apk -p:AndroidKeyStore=false
+      - name: Publish Android APK
+        run: >
+          dotnet publish SignalScanner.csproj
+          -f net9.0-android
+          -c Debug
+          -p:AndroidPackageFormat=apk
+          -p:AndroidKeyStore=false
+          -p:AndroidSigningKeyAlias=androiddebugkey
+          -p:AndroidSigningKeyPass=android
+          -p:AndroidSigningStorePass=android
         shell: pwsh
 
-      # Search entire drive for the APK so we know exact path
-      - name: Find APK (search all)
+      - name: Find APK
         run: |
-          Write-Host "=== Searching for APK files ==="
+          Write-Host "=== All APK files ==="
           Get-ChildItem -Path "D:\a" -Recurse -Filter "*.apk" -ErrorAction SilentlyContinue | Select-Object FullName
-          Write-Host "=== Searching for signed APK ==="
-          Get-ChildItem -Path "D:\a" -Recurse -Filter "*-Signed.apk" -ErrorAction SilentlyContinue | Select-Object FullName
-          Write-Host "=== bin folder contents ==="
-          Get-ChildItem -Path "D:\a\SignalScanner\SignalScanner\bin" -Recurse -ErrorAction SilentlyContinue | Select-Object FullName
+          Write-Host "=== bin/Debug folder ==="
+          Get-ChildItem -Path "D:\a\SignalScanner\SignalScanner\bin\Debug" -Recurse -ErrorAction SilentlyContinue | Select-Object FullName
         shell: pwsh
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: SignalScanner-Debug-APK
-          path: |
-            D:\a\SignalScanner\SignalScanner\bin\**\*.apk
+          path: D:\a\SignalScanner\SignalScanner\bin\Debug\net9.0-android\**\*.apk
           retention-days: 30
           if-no-files-found: warn
