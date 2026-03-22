@@ -31,66 +31,33 @@ jobs:
       - name: Install MAUI Android workload
         run: dotnet workload install maui-android --ignore-failed-sources
 
-      - name: Patch SDK 35 ZipIOException bug in BuildApk task
+      # Replace broken Build Tasks DLL with one from working SDK 34
+      - name: Replace broken Xamarin.Android.Build.Tasks.dll with SDK 34 version
         run: |
-          TARGETS="/usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/35.0.105/tools/Xamarin.Android.Common.targets"
-          echo "Targets file: $TARGETS"
-          echo "Exists: $(test -f "$TARGETS" && echo YES || echo NO)"
+          BROKEN_DLL="/usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/35.0.105/tools/Xamarin.Android.Build.Tasks.dll"
+          echo "Broken DLL exists: $(test -f "$BROKEN_DLL" && echo YES || echo NO)"
 
-          # The bug: BuildApk task tries to open an APK that doesn't exist yet
-          # Fix: add CreateFile="true" attribute to force creation
-          # We use Python for reliable XML patching
-          python3 << 'PYEOF'
-          import re, sys
+          # Download SDK 34.0.95 nupkg and extract the working DLL
+          echo "Downloading Microsoft.Android.Sdk.Linux 34.0.95..."
+          curl -sL "https://www.nuget.org/api/v2/package/Microsoft.Android.Sdk.Linux/34.0.95" \
+            -o /tmp/sdk34.nupkg
 
-          path = "/usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/35.0.105/tools/Xamarin.Android.Common.targets"
-          try:
-              with open(path, 'r') as f:
-                  content = f.read()
-          except Exception as e:
-              print(f"Cannot read: {e}")
-              sys.exit(0)
+          echo "Download size: $(du -sh /tmp/sdk34.nupkg)"
 
-          original = content
+          # Extract just the build tasks DLL
+          unzip -p /tmp/sdk34.nupkg \
+            "tools/Xamarin.Android.Build.Tasks.dll" \
+            > /tmp/Xamarin.Android.Build.Tasks.dll 2>/dev/null
 
-          # Fix 1: In BuildApk task, the ApkInputPath needs to be pre-created
-          # Add a CreateItem before BuildApk to pre-create the file
-          # The actual fix: change the Open() call behavior by setting strictConsistencyChecks
-          # We patch by adding ApkInputPath to use FileMode.Create instead of FileMode.Open
-          # Simplest fix: add a Touch task before BuildApk to create the file
-          
-          # Find the BuildApk task call and add a pre-creation step before it
-          old = '<BuildApk\n'
-          if '<BuildApk' in content:
-              # Add a Exec task before BuildApk to pre-create the APK file
-              content = content.replace(
-                  '<BuildApk',
-                  '<MakeDir Directories="$([System.IO.Path]::GetDirectoryName(\'$(IntermediateOutputPath)android/bin/$(AndroidPackageName).apk\'))" />\n    <Touch Files="$(IntermediateOutputPath)android/bin/$(AndroidPackageName).apk" AlwaysCreate="true" />\n    <BuildApk',
-                  1  # only first occurrence
-              )
-              print(f"Patched: added Touch before BuildApk")
-          else:
-              print("BuildApk tag not found, trying alternate patch")
-              # Try to find _BuildApk target
-              if '_BuildApk' in content:
-                  print("Found _BuildApk")
-
-          if content != original:
-              import os
-              # Write as root
-              tmp = '/tmp/patched.targets'
-              with open(tmp, 'w') as f:
-                  f.write(content)
-              os.system(f'sudo cp {tmp} "{path}"')
-              print("Patch written successfully")
-          else:
-              print("No changes made")
-          PYEOF
-
-      - name: Verify patch
-        run: |
-          grep -n "Touch Files" /usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/35.0.105/tools/Xamarin.Android.Common.targets | head -5 || echo "Touch not found in targets"
-          grep -n "BuildApk" /usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/35.0.105/tools/Xamarin.Android.Common.targets | head -10
+          if [ -s /tmp/Xamarin.Android.Build.Tasks.dll ]; then
+            echo "Extracted DLL size: $(du -sh /tmp/Xamarin.Android.Build.Tasks.dll)"
+            sudo cp /tmp/Xamarin.Android.Build.Tasks.dll "$BROKEN_DLL"
+            echo "✓ DLL replaced successfully"
+          else
+            echo "DLL not found in nupkg, listing contents..."
+            unzip -l /tmp/sdk34.nupkg | grep -i "build.tasks" | head -10
+            unzip -l /tmp/sdk34.nupkg | grep -i "\.dll" | head -20
+          fi
 
       - name: Restore
         run: dotnet restore SignalScanner.csproj
