@@ -4,7 +4,125 @@ on:
   push:
     branches: [ main, master ]
   workflow_dispatch:
+name: Build Android APK
 
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build-android:
+    runs-on: ubuntu-22.04
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'microsoft'
+
+      - name: Install MAUI Android workload
+        run: dotnet workload install maui-android --ignore-failed-sources
+
+      - name: Patch SDK 35 ZipIOException bug in BuildApk task
+        run: |
+          TARGETS="/usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/35.0.105/tools/Xamarin.Android.Common.targets"
+          echo "Targets file: $TARGETS"
+          echo "Exists: $(test -f "$TARGETS" && echo YES || echo NO)"
+
+          # The bug: BuildApk task tries to open an APK that doesn't exist yet
+          # Fix: add CreateFile="true" attribute to force creation
+          # We use Python for reliable XML patching
+          python3 << 'PYEOF'
+          import re, sys
+
+          path = "/usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/35.0.105/tools/Xamarin.Android.Common.targets"
+          try:
+              with open(path, 'r') as f:
+                  content = f.read()
+          except Exception as e:
+              print(f"Cannot read: {e}")
+              sys.exit(0)
+
+          original = content
+
+          # Fix 1: In BuildApk task, the ApkInputPath needs to be pre-created
+          # Add a CreateItem before BuildApk to pre-create the file
+          # The actual fix: change the Open() call behavior by setting strictConsistencyChecks
+          # We patch by adding ApkInputPath to use FileMode.Create instead of FileMode.Open
+          # Simplest fix: add a Touch task before BuildApk to create the file
+          
+          # Find the BuildApk task call and add a pre-creation step before it
+          old = '<BuildApk\n'
+          if '<BuildApk' in content:
+              # Add a Exec task before BuildApk to pre-create the APK file
+              content = content.replace(
+                  '<BuildApk',
+                  '<MakeDir Directories="$([System.IO.Path]::GetDirectoryName(\'$(IntermediateOutputPath)android/bin/$(AndroidPackageName).apk\'))" />\n    <Touch Files="$(IntermediateOutputPath)android/bin/$(AndroidPackageName).apk" AlwaysCreate="true" />\n    <BuildApk',
+                  1  # only first occurrence
+              )
+              print(f"Patched: added Touch before BuildApk")
+          else:
+              print("BuildApk tag not found, trying alternate patch")
+              # Try to find _BuildApk target
+              if '_BuildApk' in content:
+                  print("Found _BuildApk")
+
+          if content != original:
+              import os
+              # Write as root
+              tmp = '/tmp/patched.targets'
+              with open(tmp, 'w') as f:
+                  f.write(content)
+              os.system(f'sudo cp {tmp} "{path}"')
+              print("Patch written successfully")
+          else:
+              print("No changes made")
+          PYEOF
+
+      - name: Verify patch
+        run: |
+          grep -n "Touch Files" /usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/35.0.105/tools/Xamarin.Android.Common.targets | head -5 || echo "Touch not found in targets"
+          grep -n "BuildApk" /usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/35.0.105/tools/Xamarin.Android.Common.targets | head -10
+
+      - name: Restore
+        run: dotnet restore SignalScanner.csproj
+
+      - name: Build APK
+        run: |
+          dotnet build SignalScanner.csproj \
+            -f net9.0-android \
+            -c Debug \
+            -t:SignAndroidPackage \
+            -p:AndroidPackageFormat=apk \
+            -p:AndroidKeyStore=false \
+            -p:AndroidSigningKeyAlias=androiddebugkey \
+            -p:AndroidSigningKeyPass=android \
+            -p:AndroidSigningStorePass=android
+
+      - name: Find APK
+        run: find /home/runner/work -name "*.apk" 2>/dev/null || echo "No APK found"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: SignalScanner-Debug-APK
+          path: "**/*.apk"
+          retention-days: 30
+          if-no-files-found: warn
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
