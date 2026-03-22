@@ -31,6 +31,38 @@ jobs:
       - name: Install MAUI Android workload
         run: dotnet workload install maui-android --ignore-failed-sources
 
+      # Force-replace broken SDK 35 with working SDK 34.0.95
+      - name: Replace Android SDK 35 with 34.0.95
+        run: |
+          echo "=== Current Android packs ==="
+          ls /usr/share/dotnet/packs/ | grep -i android
+
+          # Download Microsoft.Android.Sdk.Linux 34.0.95 from NuGet
+          curl -L "https://www.nuget.org/api/v2/package/Microsoft.Android.Sdk.Linux/34.0.95" \
+            -o /tmp/android-sdk-34.nupkg
+
+          echo "Downloaded: $(du -sh /tmp/android-sdk-34.nupkg)"
+
+          # Extract into packs directory
+          sudo mkdir -p /usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/34.0.95
+          sudo unzip -q /tmp/android-sdk-34.nupkg \
+            -d /usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/34.0.95
+
+          echo "=== Android packs after install ==="
+          ls /usr/share/dotnet/packs/ | grep -i android
+
+      # Update global.json to force SDK 34 usage
+      - name: Create global.json to pin Android SDK
+        run: |
+          cat > global.json << 'GLOBALJSON'
+          {
+            "msbuild-sdks": {
+              "Microsoft.Android.Sdk.Linux": "34.0.95"
+            }
+          }
+          GLOBALJSON
+          cat global.json
+
       - name: Restore NuGet packages
         run: dotnet restore SignalScanner.csproj
 
@@ -45,8 +77,7 @@ jobs:
             -p:AndroidSigningKeyAlias=androiddebugkey \
             -p:AndroidSigningKeyPass=android \
             -p:AndroidSigningStorePass=android \
-            -p:EmbedAssembliesIntoApk=true \
-            -p:BundleAssemblies=false
+            -p:AndroidSdkDirectory=/usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/34.0.95
 
       - name: Find APK
         run: find /home/runner/work -name "*.apk" 2>/dev/null || true
