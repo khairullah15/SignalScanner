@@ -31,40 +31,31 @@ jobs:
       - name: Install MAUI Android workload
         run: dotnet workload install maui-android --ignore-failed-sources
 
-      - name: Fully replace SDK 35 with SDK 34.0.95
+      - name: Replace ONLY tools DLLs from SDK 34 (keep targets intact)
         run: |
-          SDK35="/usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/35.0.105"
+          SDK35_TOOLS="/usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/35.0.105/tools"
+
           echo "Downloading SDK 34.0.95..."
           curl -sL "https://www.nuget.org/api/v2/package/Microsoft.Android.Sdk.Linux/34.0.95" \
             -o /tmp/sdk34.nupkg
-          echo "Size: $(du -sh /tmp/sdk34.nupkg)"
 
           mkdir -p /tmp/sdk34
           unzip -q /tmp/sdk34.nupkg -d /tmp/sdk34
-          echo "Top-level folders in nupkg:"
-          ls /tmp/sdk34/
 
-          # Replace tools folder entirely
-          if [ -d /tmp/sdk34/tools ]; then
-            sudo cp -rf /tmp/sdk34/tools/* "$SDK35/tools/"
-            echo "✓ tools/ replaced"
+          echo "Replacing only DLLs and JARs in tools/ (keeping .targets files):"
+          sudo cp -f /tmp/sdk34/tools/*.dll  "$SDK35_TOOLS/" && echo "✓ DLLs"
+          sudo cp -f /tmp/sdk34/tools/*.jar  "$SDK35_TOOLS/" 2>/dev/null && echo "✓ JARs" || true
+          sudo cp -f /tmp/sdk34/tools/*.exe  "$SDK35_TOOLS/" 2>/dev/null && echo "✓ EXEs" || true
+
+          # Also replace the build tasks in the inner tools subfolder if exists
+          if [ -d /tmp/sdk34/tools/MSBuild ]; then
+            sudo cp -rf /tmp/sdk34/tools/MSBuild "$SDK35_TOOLS/"
+            echo "✓ MSBuild subfolder"
           fi
 
-          # Replace targets folder entirely
-          if [ -d /tmp/sdk34/targets ]; then
-            sudo cp -rf /tmp/sdk34/targets/* "$SDK35/targets/"
-            echo "✓ targets/ replaced"
-          fi
-
-          # Replace props folder if exists
-          if [ -d /tmp/sdk34/props ]; then
-            sudo cp -rf /tmp/sdk34/props/* "$SDK35/props/"
-            echo "✓ props/ replaced"
-          fi
-
-          echo "Done. SDK 35 tools now contain SDK 34 binaries."
-          echo "Build.Tasks version check:"
-          strings "$SDK35/tools/Xamarin.Android.Build.Tasks.dll" 2>/dev/null | grep "Version=" | head -3 || true
+          echo "Verify - BuildApk DLL version:"
+          dotnet-ildasm "$SDK35_TOOLS/Xamarin.Android.Build.Tasks.dll" 2>/dev/null | head -5 || \
+          strings "$SDK35_TOOLS/Xamarin.Android.Build.Tasks.dll" | grep "35\|34" | head -5 || true
 
       - name: Restore
         run: dotnet restore SignalScanner.csproj
