@@ -1,0 +1,248 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:SignalScanner.ViewModels"
+             xmlns:m="clr-namespace:SignalScanner.Models"
+             xmlns:cv="clr-namespace:SignalScanner.Converters"
+             x:Class="SignalScanner.Views.MainPage"
+             Title="Signal Scanner"
+             BackgroundColor="#0F172A">
+
+    <ContentPage.Resources>
+        <ResourceDictionary>
+            <cv:SignalToColorConverter   x:Key="SignalToColor"/>
+            <cv:CarrierToColorConverter  x:Key="CarrierToColor"/>
+            <cv:NetworkTypeToBgConverter x:Key="NetTypeBg"/>
+            <cv:NetworkTypeToFgConverter x:Key="NetTypeFg"/>
+            <cv:PercentToWidthConverter  x:Key="PctToWidth"/>
+            <cv:BoolToVisibilityConverter x:Key="BoolToVis"/>
+        </ResourceDictionary>
+    </ContentPage.Resources>
+
+    <ContentPage.BindingContext>
+        <vm:MainViewModel/>
+    </ContentPage.BindingContext>
+
+    <Grid RowDefinitions="Auto,Auto,*,Auto" Padding="16,12,16,24" RowSpacing="12">
+
+        <!-- ── Header ───────────────────────────────────────────────────── -->
+        <VerticalStackLayout Grid.Row="0" Spacing="2">
+            <Label Text="SIGNAL SCANNER"
+                   FontSize="22" FontAttributes="Bold"
+                   TextColor="#F1F5F9" CharacterSpacing="4"/>
+            <Label Text="Pakistan Network Monitor"
+                   FontSize="13" TextColor="#64748B"/>
+        </VerticalStackLayout>
+
+        <!-- ── Status bar ───────────────────────────────────────────────── -->
+        <Border Grid.Row="1"
+                BackgroundColor="#1E293B"
+                Stroke="#334155" StrokeThickness="1"
+                StrokeShape="RoundRectangle 10"
+                Padding="14,10">
+            <Grid ColumnDefinitions="*,Auto">
+                <VerticalStackLayout Grid.Column="0" Spacing="1">
+                    <Label Text="{Binding StatusText}"
+                           FontSize="13" TextColor="#94A3B8"/>
+                    <Label FontSize="11" TextColor="#475569">
+                        <Label.FormattedText>
+                            <FormattedString>
+                                <Span Text="Last updated: "/>
+                                <Span Text="{Binding LastUpdated}" TextColor="#60A5FA"/>
+                            </FormattedString>
+                        </Label.FormattedText>
+                    </Label>
+                </VerticalStackLayout>
+                <!-- Scanning indicator dot -->
+                <Ellipse Grid.Column="1" WidthRequest="10" HeightRequest="10"
+                         VerticalOptions="Center">
+                    <Ellipse.Fill>
+                        <SolidColorBrush Color="{Binding IsScanning, Converter={StaticResource SignalToColor}}"/>
+                    </Ellipse.Fill>
+                </Ellipse>
+            </Grid>
+        </Border>
+
+        <!-- ── Network list ─────────────────────────────────────────────── -->
+        <ScrollView Grid.Row="2">
+            <VerticalStackLayout Spacing="10">
+
+                <!-- Empty state -->
+                <VerticalStackLayout IsVisible="{Binding IsEmpty}"
+                                     VerticalOptions="Center" HorizontalOptions="Center"
+                                     Spacing="8" Margin="0,60,0,0">
+                    <Label Text="📡" FontSize="48" HorizontalOptions="Center"/>
+                    <Label Text="No networks found"
+                           FontSize="16" TextColor="#475569"
+                           HorizontalOptions="Center"/>
+                    <Label Text="Tap Scan to detect nearby towers"
+                           FontSize="13" TextColor="#334155"
+                           HorizontalOptions="Center"/>
+                </VerticalStackLayout>
+
+                <!-- Signal cards -->
+                <CollectionView ItemsSource="{Binding Signals}">
+                    <CollectionView.ItemTemplate>
+                        <DataTemplate x:DataType="m:NetworkSignal">
+                            <Border Margin="0,0,0,0"
+                                    BackgroundColor="#1E293B"
+                                    Stroke="#334155" StrokeThickness="1"
+                                    StrokeShape="RoundRectangle 12"
+                                    Padding="16,14">
+                                <Grid RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="10">
+
+                                    <!-- Row 1: Carrier name + badges -->
+                                    <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8">
+
+                                        <!-- Carrier color dot -->
+                                        <Ellipse Grid.Column="0" WidthRequest="12" HeightRequest="12"
+                                                 VerticalOptions="Center"
+                                                 Fill="{Binding Operator, Converter={StaticResource CarrierToColor}}"/>
+
+                                        <!-- Carrier name -->
+                                        <Label Grid.Column="1"
+                                               Text="{Binding Operator}"
+                                               FontSize="17" FontAttributes="Bold"
+                                               TextColor="#F1F5F9" VerticalOptions="Center"/>
+
+                                        <!-- Registered star -->
+                                        <Label Grid.Column="2"
+                                               Text="★ ACTIVE"
+                                               FontSize="10" TextColor="#22C55E"
+                                               VerticalOptions="Center"
+                                               IsVisible="{Binding IsRegistered}"/>
+
+                                        <!-- Network type badge -->
+                                        <Border Grid.Column="3"
+                                                BackgroundColor="{Binding NetworkType, Converter={StaticResource NetTypeBg}}"
+                                                Stroke="Transparent" StrokeThickness="0"
+                                                StrokeShape="RoundRectangle 6"
+                                                Padding="8,3">
+                                            <Label Text="{Binding NetworkType}"
+                                                   FontSize="11" FontAttributes="Bold"
+                                                   TextColor="{Binding NetworkType, Converter={StaticResource NetTypeFg}}"/>
+                                        </Border>
+                                    </Grid>
+
+                                    <!-- Row 2: Full carrier name + dBm -->
+                                    <Grid Grid.Row="1" ColumnDefinitions="*,Auto">
+                                        <Label Grid.Column="0"
+                                               Text="{Binding CarrierName}"
+                                               FontSize="12" TextColor="#64748B"/>
+                                        <Label Grid.Column="1"
+                                               FontSize="22" FontAttributes="Bold"
+                                               TextColor="{Binding SignalPercent, Converter={StaticResource SignalToColor}}"
+                                               HorizontalOptions="End">
+                                            <Label.FormattedText>
+                                                <FormattedString>
+                                                    <Span Text="{Binding SignalDbm}"/>
+                                                    <Span Text=" dBm" FontSize="12" TextColor="#64748B"/>
+                                                </FormattedString>
+                                            </Label.FormattedText>
+                                        </Label>
+                                    </Grid>
+
+                                    <!-- Row 3: Signal bar -->
+                                    <Grid Grid.Row="2" ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" RowSpacing="4">
+                                        <!-- Track background -->
+                                        <Border Grid.Row="0" Grid.Column="0"
+                                                BackgroundColor="#0F172A"
+                                                StrokeShape="RoundRectangle 4"
+                                                HeightRequest="8" Stroke="Transparent">
+                                            <!-- Fill bar via relative width hack using BoxView in Grid -->
+                                            <Grid ColumnDefinitions="*,Auto">
+                                                <BoxView Grid.Column="0"
+                                                         HeightRequest="8"
+                                                         CornerRadius="4"
+                                                         Color="{Binding SignalPercent, Converter={StaticResource SignalToColor}}"
+                                                         HorizontalOptions="Fill"
+                                                         WidthRequest="{Binding SignalPercent}"/>
+                                            </Grid>
+                                        </Border>
+
+                                        <!-- Percent label -->
+                                        <Label Grid.Row="0" Grid.Column="1"
+                                               FontSize="13" FontAttributes="Bold"
+                                               TextColor="{Binding SignalPercent, Converter={StaticResource SignalToColor}}"
+                                               VerticalOptions="Center" Margin="10,0,0,0">
+                                            <Label.FormattedText>
+                                                <FormattedString>
+                                                    <Span Text="{Binding SignalPercent}"/>
+                                                    <Span Text="%"/>
+                                                </FormattedString>
+                                            </Label.FormattedText>
+                                        </Label>
+
+                                        <!-- Quality label -->
+                                        <Label Grid.Row="1" Grid.ColumnSpan="2"
+                                               Text="{Binding QualityLabel}"
+                                               FontSize="11" TextColor="#475569"/>
+                                    </Grid>
+
+                                    <!-- Row 4: Cell info -->
+                                    <Grid Grid.Row="3" ColumnDefinitions="*,*,*" ColumnSpacing="6">
+                                        <Border Grid.Column="0" BackgroundColor="#0F172A"
+                                                StrokeShape="RoundRectangle 6" Padding="8,5" Stroke="Transparent">
+                                            <VerticalStackLayout Spacing="1">
+                                                <Label Text="MCC/MNC" FontSize="10" TextColor="#475569"/>
+                                                <Label FontSize="12" TextColor="#94A3B8">
+                                                    <Label.FormattedText>
+                                                        <FormattedString>
+                                                            <Span Text="{Binding Mcc}"/>
+                                                            <Span Text="/"/>
+                                                            <Span Text="{Binding Mnc}"/>
+                                                        </FormattedString>
+                                                    </Label.FormattedText>
+                                                </Label>
+                                            </VerticalStackLayout>
+                                        </Border>
+
+                                        <Border Grid.Column="1" BackgroundColor="#0F172A"
+                                                StrokeShape="RoundRectangle 6" Padding="8,5" Stroke="Transparent">
+                                            <VerticalStackLayout Spacing="1">
+                                                <Label Text="Cell ID" FontSize="10" TextColor="#475569"/>
+                                                <Label Text="{Binding CellId}" FontSize="12" TextColor="#94A3B8"/>
+                                            </VerticalStackLayout>
+                                        </Border>
+
+                                        <Border Grid.Column="2" BackgroundColor="#0F172A"
+                                                StrokeShape="RoundRectangle 6" Padding="8,5" Stroke="Transparent">
+                                            <VerticalStackLayout Spacing="1">
+                                                <Label Text="LAC/TAC" FontSize="10" TextColor="#475569"/>
+                                                <Label Text="{Binding Lac}" FontSize="12" TextColor="#94A3B8"/>
+                                            </VerticalStackLayout>
+                                        </Border>
+                                    </Grid>
+
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </CollectionView.ItemTemplate>
+                </CollectionView>
+
+            </VerticalStackLayout>
+        </ScrollView>
+
+        <!-- ── Scan button ──────────────────────────────────────────────── -->
+        <Button Grid.Row="3"
+                Command="{Binding StartScanCommand}"
+                CornerRadius="14"
+                HeightRequest="52"
+                FontSize="15" FontAttributes="Bold"
+                CharacterSpacing="2">
+            <Button.Triggers>
+                <DataTrigger TargetType="Button" Binding="{Binding IsScanning}" Value="False">
+                    <Setter Property="Text" Value="SCAN NETWORKS"/>
+                    <Setter Property="BackgroundColor" Value="#2563EB"/>
+                    <Setter Property="TextColor" Value="White"/>
+                </DataTrigger>
+                <DataTrigger TargetType="Button" Binding="{Binding IsScanning}" Value="True">
+                    <Setter Property="Text" Value="STOP SCANNING"/>
+                    <Setter Property="BackgroundColor" Value="#EF4444"/>
+                    <Setter Property="TextColor" Value="White"/>
+                </DataTrigger>
+            </Button.Triggers>
+        </Button>
+
+    </Grid>
+</ContentPage>
