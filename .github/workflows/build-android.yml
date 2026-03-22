@@ -31,32 +31,29 @@ jobs:
       - name: Install MAUI Android workload
         run: dotnet workload install maui-android --ignore-failed-sources
 
-      # Replace broken Build Tasks DLL with one from working SDK 34
-      - name: Replace broken Xamarin.Android.Build.Tasks.dll with SDK 34 version
+      - name: Replace ALL SDK 35 tools with SDK 34.0.95
         run: |
-          BROKEN_DLL="/usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/35.0.105/tools/Xamarin.Android.Build.Tasks.dll"
-          echo "Broken DLL exists: $(test -f "$BROKEN_DLL" && echo YES || echo NO)"
-
-          # Download SDK 34.0.95 nupkg and extract the working DLL
-          echo "Downloading Microsoft.Android.Sdk.Linux 34.0.95..."
+          SDK35_TOOLS="/usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/35.0.105/tools"
+          echo "Downloading SDK 34.0.95 from NuGet..."
           curl -sL "https://www.nuget.org/api/v2/package/Microsoft.Android.Sdk.Linux/34.0.95" \
             -o /tmp/sdk34.nupkg
+          echo "Size: $(du -sh /tmp/sdk34.nupkg)"
 
-          echo "Download size: $(du -sh /tmp/sdk34.nupkg)"
+          # Extract ALL tools from SDK 34
+          mkdir -p /tmp/sdk34
+          unzip -q /tmp/sdk34.nupkg -d /tmp/sdk34
+          echo "Extracted files in tools/:"
+          ls /tmp/sdk34/tools/ | head -30
 
-          # Extract just the build tasks DLL
-          unzip -p /tmp/sdk34.nupkg \
-            "tools/Xamarin.Android.Build.Tasks.dll" \
-            > /tmp/Xamarin.Android.Build.Tasks.dll 2>/dev/null
-
-          if [ -s /tmp/Xamarin.Android.Build.Tasks.dll ]; then
-            echo "Extracted DLL size: $(du -sh /tmp/Xamarin.Android.Build.Tasks.dll)"
-            sudo cp /tmp/Xamarin.Android.Build.Tasks.dll "$BROKEN_DLL"
-            echo "✓ DLL replaced successfully"
+          # Replace all DLLs and supporting files in SDK 35 tools folder
+          if [ -d /tmp/sdk34/tools ]; then
+            sudo cp -f /tmp/sdk34/tools/*.dll "$SDK35_TOOLS/" 2>/dev/null && echo "✓ DLLs replaced"
+            sudo cp -f /tmp/sdk34/tools/*.exe "$SDK35_TOOLS/" 2>/dev/null && echo "✓ EXEs replaced"
+            sudo cp -f /tmp/sdk34/tools/*.jar "$SDK35_TOOLS/" 2>/dev/null && echo "✓ JARs replaced"
+            echo "✓ All tools replaced"
           else
-            echo "DLL not found in nupkg, listing contents..."
-            unzip -l /tmp/sdk34.nupkg | grep -i "build.tasks" | head -10
-            unzip -l /tmp/sdk34.nupkg | grep -i "\.dll" | head -20
+            echo "tools/ folder not found, listing nupkg structure:"
+            ls /tmp/sdk34/
           fi
 
       - name: Restore
