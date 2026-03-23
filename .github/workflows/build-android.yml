@@ -52,6 +52,7 @@ jobs:
           cat > /tmp/patcher/Program.cs << 'EOF'
           using System;
           using System.IO;
+          using System.IO.Compression;
           using System.Linq;
           using Mono.Cecil;
           using Mono.Cecil.Cil;
@@ -80,37 +81,40 @@ jobs:
           var apkInputParam = execMethod.Parameters.FirstOrDefault(p => p.Name == "apkInputPath");
           if (apkInputParam == null) { Console.WriteLine("ERROR: apkInputPath not found"); return; }
 
-          Console.WriteLine("Patching ExecuteWithAbi - inserting dir+file pre-creation...");
+          Console.WriteLine("Patching - will create valid empty ZIP before BuildApk runs...");
 
-          var fileExistsRef = module.ImportReference(typeof(File).GetMethod("Exists", new[] { typeof(string) }));
-          var pathGetDirRef = module.ImportReference(typeof(Path).GetMethod("GetDirectoryName", new[] { typeof(string) }));
-          var dirCreateRef  = module.ImportReference(typeof(Directory).GetMethod("CreateDirectory", new[] { typeof(string) }));
-          var fileOpenRef   = module.ImportReference(typeof(File).GetMethod("Open", new[] { typeof(string), typeof(FileMode) }));
-          var disposeRef    = module.ImportReference(typeof(IDisposable).GetMethod("Dispose"));
+          // Import methods we need
+          var pathGetDirRef  = module.ImportReference(typeof(Path).GetMethod("GetDirectoryName", new[] { typeof(string) }));
+          var dirCreateRef   = module.ImportReference(typeof(Directory).GetMethod("CreateDirectory", new[] { typeof(string) }));
+          var fileExistsRef  = module.ImportReference(typeof(File).GetMethod("Exists", new[] { typeof(string) }));
+
+          // ZipFile.Open(path, ZipArchiveMode.Create).Dispose() - creates valid empty zip
+          var zipOpenRef = module.ImportReference(
+              typeof(ZipFile).GetMethod("Open", new[] { typeof(string), typeof(ZipArchiveMode) }));
+          var zipDisposeRef = module.ImportReference(
+              typeof(ZipArchive).GetMethod("Dispose"));
 
           var il         = execMethod.Body.GetILProcessor();
           var firstInstr = execMethod.Body.Instructions.First();
 
-          // Inject this logic before first instruction:
+          // Inject:
           //   Directory.CreateDirectory(Path.GetDirectoryName(apkInputPath));
           //   if (!File.Exists(apkInputPath))
-          //       File.Open(apkInputPath, FileMode.Create).Dispose();
+          //       ZipFile.Open(apkInputPath, ZipArchiveMode.Create).Dispose();
 
           var nop        = il.Create(OpCodes.Nop);
-          // --- CreateDirectory(GetDirectoryName(apkInputPath)) ---
           var ldParam1   = il.Create(OpCodes.Ldarg, apkInputParam);
           var callGetDir = il.Create(OpCodes.Call, pathGetDirRef);
           var callMkDir  = il.Create(OpCodes.Call, dirCreateRef);
-          var popMkDir   = il.Create(OpCodes.Pop);           // discard DirectoryInfo return
-          // --- if (!File.Exists(apkInputPath)) ---
+          var popMkDir   = il.Create(OpCodes.Pop);
           var ldParam2   = il.Create(OpCodes.Ldarg, apkInputParam);
           var callExists = il.Create(OpCodes.Call, fileExistsRef);
           var brIfExists = il.Create(OpCodes.Brtrue_S, firstInstr);
-          // --- File.Open(apkInputPath, FileMode.Create).Dispose() ---
+          // ZipFile.Open(apkInputPath, ZipArchiveMode.Create).Dispose()
           var ldParam3   = il.Create(OpCodes.Ldarg, apkInputParam);
-          var ldCreate   = il.Create(OpCodes.Ldc_I4, (int)FileMode.Create);
-          var callOpen   = il.Create(OpCodes.Call, fileOpenRef);
-          var callDisp   = il.Create(OpCodes.Callvirt, disposeRef);
+          var ldZipMode  = il.Create(OpCodes.Ldc_I4, (int)ZipArchiveMode.Create);
+          var callZipOpen= il.Create(OpCodes.Call, zipOpenRef);
+          var callZipDisp= il.Create(OpCodes.Callvirt, zipDisposeRef);
 
           il.InsertBefore(firstInstr, nop);
           il.InsertBefore(firstInstr, ldParam1);
@@ -121,9 +125,9 @@ jobs:
           il.InsertBefore(firstInstr, callExists);
           il.InsertBefore(firstInstr, brIfExists);
           il.InsertBefore(firstInstr, ldParam3);
-          il.InsertBefore(firstInstr, ldCreate);
-          il.InsertBefore(firstInstr, callOpen);
-          il.InsertBefore(firstInstr, callDisp);
+          il.InsertBefore(firstInstr, ldZipMode);
+          il.InsertBefore(firstInstr, callZipOpen);
+          il.InsertBefore(firstInstr, callZipDisp);
 
           brIfExists.Operand = firstInstr;
 
@@ -138,7 +142,7 @@ jobs:
         run: |
           DLL="/usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/35.0.105/tools/Xamarin.Android.Build.Tasks.dll"
           sudo cp -f /tmp/Xamarin.Android.Build.Tasks.patched.dll "$DLL"
-          echo "Installed patched DLL"
+          echo "Installed patched DLL: $(du -sh $DLL)"
 
       - name: Restore NuGet packages
         run: dotnet restore SignalScanner.csproj
