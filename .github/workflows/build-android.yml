@@ -80,7 +80,7 @@ jobs:
           var apkInputParam = execMethod.Parameters.FirstOrDefault(p => p.Name == "apkInputPath");
           if (apkInputParam == null) { Console.WriteLine("ERROR: apkInputPath not found"); return; }
 
-          Console.WriteLine("Patching ExecuteWithAbi...");
+          Console.WriteLine("Patching ExecuteWithAbi - inserting dir+file pre-creation...");
 
           var fileExistsRef = module.ImportReference(typeof(File).GetMethod("Exists", new[] { typeof(string) }));
           var pathGetDirRef = module.ImportReference(typeof(Path).GetMethod("GetDirectoryName", new[] { typeof(string) }));
@@ -91,14 +91,22 @@ jobs:
           var il         = execMethod.Body.GetILProcessor();
           var firstInstr = execMethod.Body.Instructions.First();
 
+          // Inject this logic before first instruction:
+          //   Directory.CreateDirectory(Path.GetDirectoryName(apkInputPath));
+          //   if (!File.Exists(apkInputPath))
+          //       File.Open(apkInputPath, FileMode.Create).Dispose();
+
           var nop        = il.Create(OpCodes.Nop);
+          // --- CreateDirectory(GetDirectoryName(apkInputPath)) ---
           var ldParam1   = il.Create(OpCodes.Ldarg, apkInputParam);
           var callGetDir = il.Create(OpCodes.Call, pathGetDirRef);
           var callMkDir  = il.Create(OpCodes.Call, dirCreateRef);
-          var popMkDir   = il.Create(OpCodes.Pop);
+          var popMkDir   = il.Create(OpCodes.Pop);           // discard DirectoryInfo return
+          // --- if (!File.Exists(apkInputPath)) ---
           var ldParam2   = il.Create(OpCodes.Ldarg, apkInputParam);
           var callExists = il.Create(OpCodes.Call, fileExistsRef);
           var brIfExists = il.Create(OpCodes.Brtrue_S, firstInstr);
+          // --- File.Open(apkInputPath, FileMode.Create).Dispose() ---
           var ldParam3   = il.Create(OpCodes.Ldarg, apkInputParam);
           var ldCreate   = il.Create(OpCodes.Ldc_I4, (int)FileMode.Create);
           var callOpen   = il.Create(OpCodes.Call, fileOpenRef);
@@ -107,6 +115,7 @@ jobs:
           il.InsertBefore(firstInstr, nop);
           il.InsertBefore(firstInstr, ldParam1);
           il.InsertBefore(firstInstr, callGetDir);
+          il.InsertBefore(firstInstr, callMkDir);
           il.InsertBefore(firstInstr, popMkDir);
           il.InsertBefore(firstInstr, ldParam2);
           il.InsertBefore(firstInstr, callExists);
@@ -128,9 +137,8 @@ jobs:
       - name: Install patched DLL with sudo
         run: |
           DLL="/usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/35.0.105/tools/Xamarin.Android.Build.Tasks.dll"
-          echo "Patched size: $(du -sh /tmp/Xamarin.Android.Build.Tasks.patched.dll)"
           sudo cp -f /tmp/Xamarin.Android.Build.Tasks.patched.dll "$DLL"
-          echo "Installed: $(du -sh $DLL)"
+          echo "Installed patched DLL"
 
       - name: Restore NuGet packages
         run: dotnet restore SignalScanner.csproj
