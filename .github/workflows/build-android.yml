@@ -30,7 +30,7 @@ jobs:
       - name: Install MAUI Android workload
         run: dotnet workload install maui-android --ignore-failed-sources
 
-      - name: Write Cecil patcher
+      - name: Write patcher csproj
         run: |
           mkdir -p /tmp/patcher
           cat > /tmp/patcher/patcher.csproj << 'EOF'
@@ -60,14 +60,12 @@ jobs:
           var dllPath  = Path.Combine(toolsDir, "Xamarin.Android.Build.Tasks.dll");
           var tmpOut   = "/tmp/Xamarin.Android.Build.Tasks.patched.dll";
 
+          if (File.Exists(tmpOut)) File.Delete(tmpOut);
+
           var resolver = new DefaultAssemblyResolver();
           resolver.AddSearchDirectory(toolsDir);
-
           foreach (var f in Directory.GetFiles("/usr/share/dotnet", "Microsoft.Build.Framework.dll", SearchOption.AllDirectories))
-          {
               resolver.AddSearchDirectory(Path.GetDirectoryName(f)!);
-              Console.WriteLine("MSBuild dir: " + Path.GetDirectoryName(f));
-          }
 
           var rParams = new ReaderParameters { AssemblyResolver = resolver, ReadWrite = false, ReadSymbols = false };
           using var asm = AssemblyDefinition.ReadAssembly(dllPath, rParams);
@@ -82,7 +80,7 @@ jobs:
           var apkInputParam = execMethod.Parameters.FirstOrDefault(p => p.Name == "apkInputPath");
           if (apkInputParam == null) { Console.WriteLine("ERROR: apkInputPath not found"); return; }
 
-          Console.WriteLine("Found ExecuteWithAbi, apkInputPath at index " + apkInputParam.Index);
+          Console.WriteLine("Patching ExecuteWithAbi...");
 
           var fileExistsRef = module.ImportReference(typeof(File).GetMethod("Exists", new[] { typeof(string) }));
           var pathGetDirRef = module.ImportReference(typeof(Path).GetMethod("GetDirectoryName", new[] { typeof(string) }));
@@ -109,7 +107,6 @@ jobs:
           il.InsertBefore(firstInstr, nop);
           il.InsertBefore(firstInstr, ldParam1);
           il.InsertBefore(firstInstr, callGetDir);
-          il.InsertBefore(firstInstr, callMkDir);
           il.InsertBefore(firstInstr, popMkDir);
           il.InsertBefore(firstInstr, ldParam2);
           il.InsertBefore(firstInstr, callExists);
@@ -122,13 +119,18 @@ jobs:
           brIfExists.Operand = firstInstr;
 
           asm.Write(tmpOut, new WriterParameters { WriteSymbols = false });
-          Console.WriteLine("Written to " + tmpOut);
-          File.Copy(tmpOut, dllPath, overwrite: true);
-          Console.WriteLine("DLL replaced successfully");
+          Console.WriteLine("Patch written to " + tmpOut);
           EOF
 
       - name: Run Cecil patcher
         run: cd /tmp/patcher && dotnet run --project patcher.csproj
+
+      - name: Install patched DLL with sudo
+        run: |
+          DLL="/usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/35.0.105/tools/Xamarin.Android.Build.Tasks.dll"
+          echo "Patched size: $(du -sh /tmp/Xamarin.Android.Build.Tasks.patched.dll)"
+          sudo cp -f /tmp/Xamarin.Android.Build.Tasks.patched.dll "$DLL"
+          echo "Installed: $(du -sh $DLL)"
 
       - name: Restore NuGet packages
         run: dotnet restore SignalScanner.csproj
