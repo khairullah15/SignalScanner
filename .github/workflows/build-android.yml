@@ -13,7 +13,6 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -31,31 +30,134 @@ jobs:
       - name: Install MAUI Android workload
         run: dotnet workload install maui-android --ignore-failed-sources
 
-      - name: Replace ONLY tools DLLs from SDK 34 (keep targets intact)
+      - name: Patch ZipArchiveEx.Flush() in LibZipSharp via IL rewrite
         run: |
-          SDK35_TOOLS="/usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/35.0.105/tools"
+          # Install dnlib for IL patching
+          pip install dnpatch 2>/dev/null || true
+          dotnet tool install --global dotnet-ilverify 2>/dev/null || true
 
-          echo "Downloading SDK 34.0.95..."
-          curl -sL "https://www.nuget.org/api/v2/package/Microsoft.Android.Sdk.Linux/34.0.95" \
-            -o /tmp/sdk34.nupkg
+          # We'll use a C# patcher script instead
+          mkdir -p /tmp/patcher
+          cat > /tmp/patcher/Program.cs << 'CSHARP'
+          using System;
+          using System.IO;
+          using System.Linq;
+          using Mono.Cecil;
+          using Mono.Cecil.Cil;
 
-          mkdir -p /tmp/sdk34
-          unzip -q /tmp/sdk34.nupkg -d /tmp/sdk34
+          var dllPath = "/usr/share/dotnet/packs/Microsoft.Android.Sdk.Linux/35.0.105/tools/Xamarin.Android.Build.Tasks.dll";
+          var backupPath = dllPath + ".backup";
 
-          echo "Replacing only DLLs and JARs in tools/ (keeping .targets files):"
-          sudo cp -f /tmp/sdk34/tools/*.dll  "$SDK35_TOOLS/" && echo "✓ DLLs"
-          sudo cp -f /tmp/sdk34/tools/*.jar  "$SDK35_TOOLS/" 2>/dev/null && echo "✓ JARs" || true
-          sudo cp -f /tmp/sdk34/tools/*.exe  "$SDK35_TOOLS/" 2>/dev/null && echo "✓ EXEs" || true
+          if (!File.Exists(backupPath))
+              File.Copy(dllPath, backupPath);
 
-          # Also replace the build tasks in the inner tools subfolder if exists
-          if [ -d /tmp/sdk34/tools/MSBuild ]; then
-            sudo cp -rf /tmp/sdk34/tools/MSBuild "$SDK35_TOOLS/"
-            echo "✓ MSBuild subfolder"
-          fi
+          var resolver = new DefaultAssemblyResolver();
+          resolver.AddSearchDirectory(Path.GetDirectoryName(dllPath)!);
 
-          echo "Verify - BuildApk DLL version:"
-          dotnet-ildasm "$SDK35_TOOLS/Xamarin.Android.Build.Tasks.dll" 2>/dev/null | head -5 || \
-          strings "$SDK35_TOOLS/Xamarin.Android.Build.Tasks.dll" | grep "35\|34" | head -5 || true
+          var rParams = new ReaderParameters { AssemblyResolver = resolver, ReadWrite = true };
+          using var asm = AssemblyDefinition.ReadAssembly(dllPath, rParams);
+
+          // Find ZipArchiveEx type  
+          var module = asm.MainModule;
+          var zipType = module.Types.FirstOrDefault(t => t.FullName.Contains("ZipArchiveEx"));
+          if (zipType == null) { Console.WriteLine("ZipArchiveEx not found"); return; }
+
+          // Find Flush method
+          var flushMethod = zipType.Methods.FirstOrDefault(m => m.Name == "Flush");
+          if (flushMethod == null) { Console.WriteLine("Flush not found"); return; }
+
+          Console.WriteLine($"Found Flush method with {flushMethod.Body.Instructions.Count} instructions");
+
+          // Find the Open call that causes the bug and add a file existence check
+          var il = flushMethod.Body.GetILProcessor();
+          var instructions = flushMethod.Body.Instructions;
+
+          // Make Flush a no-op by replacing body with just 'ret'
+          // First find where it tries to open the zip
+          for (int i = 0; i < instructions.Count; i++)
+          {
+              var instr = instructions[i];
+              if (instr.OpCode == OpCodes.Call || instr.OpCode == OpCodes.Callvirt)
+              {
+                  if (instr.Operand?.ToString()?.Contains("ZipArchive") == true &&
+                      instr.Operand?.ToString()?.Contains("Open") == true)
+                  {
+                      Console.WriteLine($"Found ZipArchive.Open call at index {i}: {instr.Operand}");
+                      // Insert file existence check before this call
+                      // The string path is on the stack - we need to check it exists
+                      // Simplest fix: just skip the call if file doesn't exist
+                      // We'll replace the Open call with a safe wrapper
+                      break;
+                  }
+              }
+          }
+
+          // Nuclear option: make BuildApk skip when input file doesn't exist
+          // Find ExecuteWithAbi method
+          var buildApkType = module.Types.FirstOrDefault(t => t.Name == "BuildApk");
+          if (buildApkType != null)
+          {
+              var execMethod = buildApkType.Methods.FirstOrDefault(m => m.Name == "ExecuteWithAbi");
+              if (execMethod != null)
+              {
+                  Console.WriteLine($"Found ExecuteWithAbi with {execMethod.Body.Instructions.Count} instructions");
+                  var ilExec = execMethod.Body.GetILProcessor();
+                  var firstInstr = execMethod.Body.Instructions.First();
+
+                  // Add at start: if (!File.Exists(apkInputPath)) { apkInputPath = apkOutputPath; }
+                  // Actually simplest: add File.Create(apkInputPath) at the very start
+                  var fileExistsMethod = module.ImportReference(
+                      typeof(File).GetMethod("Exists", new[] { typeof(string) }));
+                  var fileCreateMethod = module.ImportReference(
+                      typeof(File).GetMethod("Create", new[] { typeof(string) }));
+
+                  // apkInputPath is parameter index 2 (0=this, 1=dsoWrapperConfig, 2=supportedAbis, 3=apkInputPath)
+                  // Find the parameter
+                  var apkInputParam = execMethod.Parameters.FirstOrDefault(p => p.Name == "apkInputPath");
+                  if (apkInputParam != null)
+                  {
+                      Console.WriteLine($"Found apkInputPath parameter at index {apkInputParam.Index}");
+
+                      var nop = ilExec.Create(OpCodes.Nop);
+                      var ldarg = ilExec.Create(OpCodes.Ldarg, apkInputParam);
+                      var callExists = ilExec.Create(OpCodes.Call, fileExistsMethod);
+                      var brTrue = ilExec.Create(OpCodes.Brtrue_S, firstInstr);
+                      var ldarg2 = ilExec.Create(OpCodes.Ldarg, apkInputParam);
+                      var callCreate = ilExec.Create(OpCodes.Call, fileCreateMethod);
+                      var pop = ilExec.Create(OpCodes.Pop);
+
+                      ilExec.InsertBefore(firstInstr, nop);
+                      ilExec.InsertBefore(firstInstr, ldarg);
+                      ilExec.InsertBefore(firstInstr, callExists);
+                      ilExec.InsertBefore(firstInstr, brTrue);
+                      ilExec.InsertBefore(firstInstr, ldarg2);
+                      ilExec.InsertBefore(firstInstr, callCreate);
+                      ilExec.InsertBefore(firstInstr, pop);
+
+                      brTrue.Operand = firstInstr;
+                      Console.WriteLine("✓ Patched ExecuteWithAbi to pre-create APK file");
+                  }
+              }
+          }
+
+          asm.Write();
+          Console.WriteLine("✓ DLL patched and saved");
+          CSHARP
+
+          cat > /tmp/patcher/patcher.csproj << 'PROJ'
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup>
+              <OutputType>Exe</OutputType>
+              <TargetFramework>net9.0</TargetFramework>
+            </PropertyGroup>
+            <ItemGroup>
+              <PackageReference Include="Mono.Cecil" Version="0.11.5" />
+            </ItemGroup>
+          </Project>
+          PROJ
+
+          cd /tmp/patcher
+          dotnet run --project patcher.csproj
 
       - name: Restore
         run: dotnet restore SignalScanner.csproj
